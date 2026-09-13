@@ -14,3 +14,4 @@ model_outputs/
 model_outputs_backup/
 data_outputs/
 logs/
+outputs/

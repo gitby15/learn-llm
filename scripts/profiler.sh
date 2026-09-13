@@ -1,0 +1,1 @@
+xcrun xctrace record --template "Metal System Trace" --output outputs/benchmark/xxx.trace --launch -- .venv/bin/python src/learn_llm/model_struct/layers/embedding/normal_embedding.py

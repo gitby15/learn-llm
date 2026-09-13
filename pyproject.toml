@@ -8,12 +8,9 @@ dependencies = [
      "accelerate>=1.14.0",
      "bottle>=0.13.4",
      "datasets>=5.0.1",
-     "lighteval>=0.13.0",
      "lm-eval>=0.4.12",
-     "modelscope>=1.39.1",
      "numpy>=2.5.2",
-     "tensorboard>=2.21.0",
-     "torch===2.8.0",
+     "torch>=2.14.0",
      "tqdm>=4.70.0",
      "transformers>=5.15.0",
 ]
@@ -24,6 +21,7 @@ i-c = "learn_llm.inference.chat:main"
 pre-t = "learn_llm.training.pretrain.train:main"
 pre-e = "learn_llm.training.pretrain.evaluate:main"
 sft-t = "learn_llm.training.sft:main"
+profile-embedding = "learn_llm.model_struct.layers.embedding.normal_embedding:profile"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

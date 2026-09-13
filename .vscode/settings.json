@@ -1,3 +1,13 @@
 {
     "python.languageServer": "Jedi",
+    "basedpyright.analysis.diagnosticMode": "openFilesOnly",
+    "basedpyright.analysis.exclude": [
+    "**/.venv",
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/.mypy_cache",
+    "**/data",
+    "**/datasets",
+    "**/checkpoints"
+  ],
 }
