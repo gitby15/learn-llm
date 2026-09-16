@@ -1,3 +1,6 @@
 {
     "python.languageServer": "Jedi",
+    "code-runner.executorMap.python": {
+        "python": "${workspaceFolder}/.venv/bin/python"
+    }
 }

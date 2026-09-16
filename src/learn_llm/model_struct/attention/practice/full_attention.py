@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,6 +9,7 @@ class NormalAttention(nn.Module):
         super().__init__()
         self.head_dim = head_dim
         self.hidden_size = hidden_size
+
         # 单头注意力，dim就是全量数据
         self.w_q = nn.Linear(hidden_size, head_dim, bias=False)
         self.w_k = nn.Linear(hidden_size, head_dim, bias=False)
@@ -34,7 +33,6 @@ class NormalAttention(nn.Module):
         score = F.softmax(logits, dim=-1)
         return score @ value
 
-
     # kv_cache的空间复杂度：2 * D * TPast
     def _kv_cache_attention(
         self,
@@ -42,8 +40,8 @@ class NormalAttention(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         mask: torch.Tensor | None,  # decode的时候，Mask是空的
-        past_key_value: Tuple[torch.Tensor, torch.Tensor] | None = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         if past_key_value is not None:
             # kv_cache 的形状是[B, Tpast, D], k和v的形状是[B, Tnew. D]
             # mask的形状是[Tq, Tpast + Tnew]
@@ -60,8 +58,8 @@ class NormalAttention(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
         mask: torch.Tensor | None,
-        past_key_value: Tuple[torch.Tensor, torch.Tensor] | None = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         query = self.w_q(q)
         key = self.w_k(k)
         value = self.w_v(v)
@@ -73,7 +71,6 @@ class NormalAttention(nn.Module):
 
 
 class MHA(nn.Module):
-
     def __init__(self, hidden_size: int, sub_head_dim: int, num_heads: int):
         super().__init__()
         self.hidden_size = hidden_size
@@ -124,7 +121,7 @@ class MHA(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         mask: torch.Tensor | None,
-        past_key_value: Tuple[torch.Tensor, torch.Tensor] | None = None,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
     ):
         if past_key_value is not None:
             key_cache, value_cache = past_key_value
@@ -140,8 +137,8 @@ class MHA(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
         mask: torch.Tensor | None,
-        past_key_value: Tuple[torch.Tensor, torch.Tensor] | None = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         query = self.w_q(q)
         key = self.w_k(k)
         value = self.w_v(v)
@@ -174,10 +171,16 @@ class GQA(nn.Module):
         return x.reshape(batch_size, -1, num_heads, self.sub_head_dim).transpose(1, 2)
 
     def _attention(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: torch.Tensor | None
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: torch.Tensor | None,
     ):
         batch_size = q.size(0)
-        q_len = q.size(1) # 在kv cache的场景，query可能只有1个Token，但是k和v仍然是满编的
+        q_len = q.size(
+            1
+        )  # 在kv cache的场景，query可能只有1个Token，但是k和v仍然是满编的
         kv_len = k.size(1)
         group_size = self.group_size
         # [B, T, Hkv*G*D] -> [B, T, Hkv, G, D] -> [B, G, Hkv, T, D]
@@ -203,7 +206,7 @@ class GQA(nn.Module):
             # Todo: 需要留意一下mask的形状，现在logits是[B, G, Hkv, Tq, Tkv], mask需要匹配这个形状
             logits = logits.masked_fill(mask == 0, float("-inf"))
         score = F.softmax(logits, dim=-1)
-        
+
         result = torch.einsum(
             "bgkts,bksd->bgktd",
             score,
@@ -222,7 +225,7 @@ class GQA(nn.Module):
         key: torch.Tensor,
         value: torch.Tensor,
         mask: torch.Tensor | None,
-        past_key_value: Tuple[torch.Tensor, torch.Tensor] | None = None,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
     ):
         if past_key_value is not None:
             key_cache, value_cache = past_key_value
@@ -237,74 +240,100 @@ class GQA(nn.Module):
         k: torch.Tensor,
         v: torch.Tensor,
         mask: torch.Tensor | None,
-        past_key_value: Tuple[torch.Tensor, torch.Tensor] | None = None,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
     ):
         query = self.w_q(q)
         key = self.w_k(k)
         value = self.w_v(v)
-
-        result, kv_cache = self._kv_cache_attention(query, key, value, mask, past_key_value)
+        result, kv_cache = self._kv_cache_attention(
+            query, key, value, mask, past_key_value
+        )
         return self.w_o(result), kv_cache
 
 
-class FastGQA(nn.Module):
-    """使用融合投影与 PyTorch SDPA/FlashAttention 的高性能自注意力。"""
-
-    def __init__(
-        self,
-        hidden_size: int,
-        head_dim: int,
-        num_q_heads: int,
-        num_kv_heads: int,
-        dropout_p: float = 0.0,
-    ):
+class MLA(nn.Module):
+    def __init__(self, hidden_size: int, sub_head_dim: int, num_q_heads: int, num_kv_heads: int, latent_dim: int):
         super().__init__()
+        if sub_head_dim * num_q_heads != hidden_size:
+            raise ValueError("sub_head_dim * num_q_heads must equal hidden_size")
         if num_q_heads % num_kv_heads != 0:
             raise ValueError("num_q_heads must be divisible by num_kv_heads")
-        if not 0.0 <= dropout_p < 1.0:
-            raise ValueError("dropout_p must be in [0, 1)")
+        if latent_dim <= 0:
+            raise ValueError("latent_dim must be positive")
 
         self.hidden_size = hidden_size
-        self.head_dim = head_dim
+        self.sub_head_dim = sub_head_dim
         self.num_q_heads = num_q_heads
         self.num_kv_heads = num_kv_heads
-        self.dropout_p = dropout_p
-        self.q_size = num_q_heads * head_dim
-        self.kv_size = num_kv_heads * head_dim
+        self.group_size = num_q_heads // num_kv_heads
+        self.latent_dim = latent_dim
 
-        # 自注意力中 Q/K/V 输入相同，合并为一次 GEMM。
-        self.w_qkv = nn.Linear(hidden_size, self.q_size + 2 * self.kv_size, bias=False)
-        self.w_o = nn.Linear(self.q_size, hidden_size, bias=False)
+        self.w_q = nn.Linear(hidden_size, num_q_heads * sub_head_dim, bias=False)
+        self.kv_down_proj = nn.Linear(hidden_size, latent_dim, bias=False)
+        self.k_up_proj = nn.Linear(latent_dim, num_kv_heads * sub_head_dim, bias=False)
+        self.v_up_proj = nn.Linear(latent_dim, num_kv_heads * sub_head_dim, bias=False)
+        self.w_o = nn.Linear(num_q_heads * sub_head_dim, hidden_size, bias=False)
+
+    def _attention(
+        self,
+        query: torch.Tensor,
+        compressed_kv: torch.Tensor,
+        mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        batch_size = query.size(0)
+        q_len = query.size(1)
+        kv_len = compressed_kv.size(1)
+
+        grouped_query = query.reshape(
+            batch_size, q_len, self.num_kv_heads, self.group_size, self.sub_head_dim
+        ).transpose(1, 3)
+        key = self.k_up_proj(compressed_kv).reshape(
+            batch_size, kv_len, self.num_kv_heads, self.sub_head_dim
+        ).transpose(1, 2)
+        value = self.v_up_proj(compressed_kv).reshape(
+            batch_size, kv_len, self.num_kv_heads, self.sub_head_dim
+        ).transpose(1, 2)
+
+        logits = torch.einsum(
+            "bgktd,bkds->bgkts",
+            grouped_query,
+            key.transpose(-2, -1),
+        )
+        logits = logits / self.sub_head_dim**0.5
+        if mask is not None:
+            logits = logits.masked_fill(mask == 0, float("-inf"))
+        score = F.softmax(logits, dim=-1)
+
+        result = torch.einsum(
+            "bgkts,bksd->bgktd",
+            score,
+            value,
+        )
+        return result.transpose(1, 3).reshape(
+            batch_size, q_len, self.num_q_heads * self.sub_head_dim
+        )
+
+    def _kv_cache_attention(
+        self,
+        query: torch.Tensor,
+        compressed_kv: torch.Tensor,
+        mask: torch.Tensor | None,
+        past_key_value: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if past_key_value is not None:
+            compressed_kv = torch.cat([past_key_value, compressed_kv], dim=1)
+        attention = self._attention(query, compressed_kv, mask)
+        return attention, compressed_kv
 
     def forward(
         self,
         x: torch.Tensor,
-        attn_mask: torch.Tensor | None = None,
-        is_causal: bool = False,
-    ) -> torch.Tensor:
-        batch_size, seq_len, _ = x.shape
-        query, key, value = self.w_qkv(x).split(
-            (self.q_size, self.kv_size, self.kv_size), dim=-1
+        mask: torch.Tensor | None,
+        past_key_value: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        query = self.w_q(x)
+        compressed_kv = self.kv_down_proj(x)
+        output, kv_cache = self._kv_cache_attention(
+            query, compressed_kv, mask, past_key_value
         )
-
-        query = query.view(
-            batch_size, seq_len, self.num_q_heads, self.head_dim
-        ).transpose(1, 2)
-        key = key.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(
-            1, 2
-        )
-        value = value.view(
-            batch_size, seq_len, self.num_kv_heads, self.head_dim
-        ).transpose(1, 2)
-
-        attention = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout_p if self.training else 0.0,
-            is_causal=is_causal,
-            enable_gqa=self.num_q_heads != self.num_kv_heads,
-        )
-        attention = attention.transpose(1, 2).reshape(batch_size, seq_len, self.q_size)
-        return self.w_o(attention)
+        return self.w_o(output), kv_cache
